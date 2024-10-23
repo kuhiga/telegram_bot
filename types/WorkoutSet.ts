@@ -10,5 +10,5 @@ export interface WorkoutSet {
   seconds?: any;
   notes?: string;
   workoutNotes?: string;
-  rpe?: string;
+  rpe?: number;
 }
