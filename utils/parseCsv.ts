@@ -9,7 +9,7 @@ export const parseCSV = (csvContent: string): WorkoutSet[] => {
     if (values.length >= headers.length) {
       sets.push({
         date: values[0],
-        workoutName: values[1],
+        workoutName: values[1].toLowerCase(),
         duration: values[2],
         exerciseName: values[3],
         setOrder: Number(values[4]),

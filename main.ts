@@ -55,12 +55,13 @@ bot.command("last", async (ctx) => {
   const workoutsByDate = new Map<string, WorkoutSet[]>();
 
   // Group workouts by date
-  workouts.forEach((set) => {
-    if (set.workoutName.toLowerCase() === workoutType.toLowerCase()) {
-      if (!workoutsByDate.has(set.date)) {
-        workoutsByDate.set(set.date, []);
+  workouts.forEach((workout: WorkoutSet) => {
+    console.log("workout name is " + workout.workoutName);
+    if (workout.workoutName.toLowerCase() === workoutType.toLowerCase()) {
+      if (!workoutsByDate.has(workout.date)) {
+        workoutsByDate.set(workout.date, []);
       }
-      workoutsByDate.get(set.date)?.push(set);
+      workoutsByDate.get(workout.date)?.push(workout);
     }
   });
 
