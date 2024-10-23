@@ -91,43 +91,52 @@ bot.command("history", async (ctx) => {
 
   const workouts = result.value as WorkoutSet[];
   let message = "💪 *Workout History*\n\n";
+  const workoutsByDate = new Map();
 
-  // Group by date and workout
-  const workoutsByDate = new Map<string, WorkoutSet[]>();
+  // Group by date
   workouts.forEach((set) => {
     if (!workoutsByDate.has(set.date)) {
       workoutsByDate.set(set.date, []);
     }
-    workoutsByDate.get(set.date)?.push(set);
+    workoutsByDate.get(set.date).push(set);
   });
 
-  // Sort dates in reverse chronological order
-  const sortedDates = Array.from(workoutsByDate.keys()).sort().reverse();
+  // Create summary with pagination
+  let count = 0;
+  for (const [date, sets] of workoutsByDate) {
+    // Limit to recent 10 workouts
+    if (count >= 10) break;
 
-  // Show last 7 days of workouts
-  const recentDates = sortedDates.slice(0, 7);
+    message += `📅 ${date}\n`;
+    const exercises = new Set(sets.map((s: WorkoutSet) => s.exerciseName));
 
-  for (const date of recentDates) {
-    const sets = workoutsByDate.get(date) || [];
-    message += `\n📅 *${date}*\n`;
-    message += formatWorkoutDetails(sets);
-    message += "\n";
+    // Limit exercises list length
+    const exerciseList = Array.from(exercises)
+      .slice(0, 5) // Show only first 5 exercises
+      .join(", ");
+
+    message += `Exercises: ${exerciseList}`;
+
+    // Add ellipsis if there are more exercises
+    if (exercises.size > 5) {
+      message += ", ...";
+    }
+
+    message += "\n\n";
+    count++;
   }
 
-  // Add summary footer
-  message += "\n📊 *Summary*\n";
-  message += `Total workouts: ${sortedDates.length}\n`;
-  message += `Showing latest ${recentDates.length} days\n`;
-  message += "\nUse /history_all to see full history";
+  // Add note if there are more workouts
+  if (workoutsByDate.size > 10) {
+    message += `_Showing 10 most recent workouts out of ${workoutsByDate.size}_`;
+  }
 
-  // Split message if too long
-  if (message.length > 4096) {
-    const chunks = message.match(/.{1,4096}/g) || [];
-    for (const chunk of chunks) {
-      await ctx.reply(chunk, { parse_mode: "Markdown" });
-    }
-  } else {
+  try {
     await ctx.reply(message, { parse_mode: "Markdown" });
+  } catch (error) {
+    console.error("Error sending message:", error);
+    // Fallback without markdown
+    await ctx.reply("Error displaying workout history. Try again later.");
   }
 });
 
