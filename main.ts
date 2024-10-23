@@ -56,7 +56,9 @@ bot.command("last", async (ctx) => {
 
   // Group workouts by date
   workouts.forEach((workout: WorkoutSet) => {
-    console.log("workout name is " + workout.workoutName);
+    console.log(
+      `workoutname ${workout.workoutName.toLowerCase()} compared to ${workoutType.toLowerCase()}`
+    );
     if (workout.workoutName.toLowerCase() === workoutType.toLowerCase()) {
       if (!workoutsByDate.has(workout.date)) {
         workoutsByDate.set(workout.date, []);
