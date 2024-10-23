@@ -128,7 +128,7 @@ bot.command("history", async (ctx) => {
 
 // Error handler
 bot.catch((err) => {
-  console.error("Error in bot:", err);
+  console.error("Error in the bot:", err);
 });
 
 // Webhook handler
