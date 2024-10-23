@@ -91,52 +91,43 @@ bot.command("history", async (ctx) => {
 
   const workouts = result.value as WorkoutSet[];
   let message = "💪 *Workout History*\n\n";
-  const workoutsByDate = new Map();
 
-  // Group by date
+  // Group by date and workout
+  const workoutsByDate = new Map<string, WorkoutSet[]>();
   workouts.forEach((set) => {
     if (!workoutsByDate.has(set.date)) {
       workoutsByDate.set(set.date, []);
     }
-    workoutsByDate.get(set.date).push(set);
+    workoutsByDate.get(set.date)?.push(set);
   });
 
-  // Create summary with pagination
-  let count = 0;
-  for (const [date, sets] of workoutsByDate) {
-    // Limit to recent 10 workouts
-    if (count >= 10) break;
+  // Sort dates in reverse chronological order
+  const sortedDates = Array.from(workoutsByDate.keys()).sort().reverse();
 
-    message += `📅 ${date}\n`;
-    const exercises = new Set(sets.map((s: WorkoutSet) => s.exerciseName));
+  // Show last 7 days of workouts
+  const recentDates = sortedDates.slice(0, 7);
 
-    // Limit exercises list length
-    const exerciseList = Array.from(exercises)
-      .slice(0, 5) // Show only first 5 exercises
-      .join(", ");
+  for (const date of recentDates) {
+    const sets = workoutsByDate.get(date) || [];
+    message += `\n📅 *${date}*\n`;
+    message += formatWorkoutDetails(sets);
+    message += "\n";
+  }
 
-    message += `Exercises: ${exerciseList}`;
+  // Add summary footer
+  message += "\n📊 *Summary*\n";
+  message += `Total workouts: ${sortedDates.length}\n`;
+  message += `Showing latest ${recentDates.length} days\n`;
+  message += "\nUse /history_all to see full history";
 
-    // Add ellipsis if there are more exercises
-    if (exercises.size > 5) {
-      message += ", ...";
+  // Split message if too long
+  if (message.length > 4096) {
+    const chunks = message.match(/.{1,4096}/g) || [];
+    for (const chunk of chunks) {
+      await ctx.reply(chunk, { parse_mode: "Markdown" });
     }
-
-    message += "\n\n";
-    count++;
-  }
-
-  // Add note if there are more workouts
-  if (workoutsByDate.size > 10) {
-    message += `_Showing 10 most recent workouts out of ${workoutsByDate.size}_`;
-  }
-
-  try {
+  } else {
     await ctx.reply(message, { parse_mode: "Markdown" });
-  } catch (error) {
-    console.error("Error sending message:", error);
-    // Fallback without markdown
-    await ctx.reply("Error displaying workout history. Try again later.");
   }
 });
 
