@@ -1,24 +1,10 @@
 import { Bot, webhookCallback } from "npm:grammy";
 import "jsr:@std/dotenv/load";
-
+import { WorkoutSet } from "./types/WorkoutSet.ts";
+import { formatWorkoutDetails } from "./utils/formatWorkout.ts";
 // Bot and KV setup
 const bot = new Bot(Deno.env.get("TELEGRAM_API_TOKEN") ?? "");
 const kv = await Deno.openKv();
-
-interface WorkoutSet {
-  date: string;
-  workoutName: string;
-  duration: string;
-  exerciseName: string;
-  setOrder: number;
-  weight: number;
-  reps: number;
-  distance?: any;
-  seconds?: any;
-  notes?: string;
-  workoutNotes?: string;
-  rpe?: string;
-}
 
 // Bot commands
 bot.command("start", async (ctx) => {
@@ -96,34 +82,53 @@ bot.command("history", async (ctx) => {
     await ctx.reply("Error: unable to get user id");
     return;
   }
-  const result = await kv.get(["workouts", userId]);
 
+  const result = await kv.get(["workouts", userId]);
   if (!result.value) {
     await ctx.reply("No workout history found. Upload a CSV file first!");
     return;
   }
 
   const workouts = result.value as WorkoutSet[];
+  let message = "💪 *Workout History*\n\n";
 
-  let message = "Recent Workouts:\n\n";
-  const workoutsByDate = new Map();
-
-  // Group by date
+  // Group by date and workout
+  const workoutsByDate = new Map<string, WorkoutSet[]>();
   workouts.forEach((set) => {
     if (!workoutsByDate.has(set.date)) {
       workoutsByDate.set(set.date, []);
     }
-    workoutsByDate.get(set.date).push(set);
+    workoutsByDate.get(set.date)?.push(set);
   });
 
-  // Create summary
-  for (const [date, sets] of workoutsByDate) {
-    message += `📅 ${date}\n`;
-    const exercises = new Set(sets.map((s: WorkoutSet) => s.exerciseName));
-    message += `Exercises: ${Array.from(exercises).join(", ")}\n\n`;
+  // Sort dates in reverse chronological order
+  const sortedDates = Array.from(workoutsByDate.keys()).sort().reverse();
+
+  // Show last 7 days of workouts
+  const recentDates = sortedDates.slice(0, 7);
+
+  for (const date of recentDates) {
+    const sets = workoutsByDate.get(date) || [];
+    message += `\n📅 *${date}*\n`;
+    message += formatWorkoutDetails(sets);
+    message += "\n";
   }
 
-  await ctx.reply(message);
+  // Add summary footer
+  message += "\n📊 *Summary*\n";
+  message += `Total workouts: ${sortedDates.length}\n`;
+  message += `Showing latest ${recentDates.length} days\n`;
+  message += "\nUse /history_all to see full history";
+
+  // Split message if too long
+  if (message.length > 4096) {
+    const chunks = message.match(/.{1,4096}/g) || [];
+    for (const chunk of chunks) {
+      await ctx.reply(chunk, { parse_mode: "Markdown" });
+    }
+  } else {
+    await ctx.reply(message, { parse_mode: "Markdown" });
+  }
 });
 
 // Error handler
