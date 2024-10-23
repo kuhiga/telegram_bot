@@ -1,81 +1,114 @@
 import { Bot, webhookCallback } from "npm:grammy";
 import "jsr:@std/dotenv/load";
 import { WorkoutSet } from "./types/WorkoutSet.ts";
-import { formatWorkoutDetails } from "./utils/formatWorkout.ts";
-// Bot and KV setup
-const bot = new Bot(Deno.env.get("TELEGRAM_API_TOKEN") ?? "");
+import { parseCSV } from "./utils/parseCsv.ts";
+// Constants
+const BOT_TOKEN = Deno.env.get("TELEGRAM_API_TOKEN") ?? "";
+const WELCOME_MESSAGE = `Welcome to Strong CSV Bot! 💪
+Send me your Strong app CSV export and I'll store your workouts.
+Commands:
+/recent - View your recent workout highlights
+/last [type] - View your last workout of specific type`;
+
+// Initialize bot and KV store
+const bot = new Bot(BOT_TOKEN);
 const kv = await Deno.openKv();
 
-// Bot commands
+const formatWorkoutSummary = (
+  exercise: string,
+  topSet: WorkoutSet,
+  includeHeader = true
+): string => {
+  let message = includeHeader ? `🏋️ ${exercise}\n` : "";
+  message += `   Best Set: ${topSet.weight}lbs × ${topSet.reps} reps`;
+  if (topSet.rpe) {
+    message += ` (RPE: ${topSet.rpe})`;
+  }
+  return message + "\n";
+};
+
+// Command Handlers
 bot.command("start", async (ctx) => {
-  await ctx.reply(
-    "Welcome to Strong CSV Bot! 💪\n" +
-      "Send me your Strong app CSV export and I'll store your workouts.\n" +
-      "Commands:\n" +
-      "/recent - View your recent workout highlights"
-  );
+  await ctx.reply(WELCOME_MESSAGE);
 });
 
-// Handle CSV file uploads
-bot.on("message:document", async (ctx) => {
-  if (ctx.message.document.file_name?.endsWith(".csv")) {
-    try {
-      // Get file
-      const file = await ctx.getFile();
-      const filePath = file.file_path;
+bot.command("last", async (ctx) => {
+  const userId = ctx?.from?.id.toString();
+  if (!userId) {
+    await ctx.reply("Error: unable to get user id");
+    return;
+  }
 
-      if (!filePath) {
-        await ctx.reply("Couldn't get the file path.");
-        return;
+  const workoutType = ctx?.message?.text.split(" ")[1]?.trim();
+  if (!workoutType) {
+    await ctx.reply("Please specify workout type (e.g., /last Push)");
+    return;
+  }
+
+  const result = await kv.get(["workouts", userId]);
+  if (!result.value) {
+    await ctx.reply("No workouts found. Upload a CSV file first!");
+    return;
+  }
+
+  const workouts = result.value as WorkoutSet[];
+  const workoutsByDate = new Map<string, WorkoutSet[]>();
+
+  // Group workouts by date
+  workouts.forEach((set) => {
+    if (set.workoutName.toLowerCase() === workoutType.toLowerCase()) {
+      if (!workoutsByDate.has(set.date)) {
+        workoutsByDate.set(set.date, []);
       }
-
-      // Download file content
-      const response = await fetch(
-        `https://api.telegram.org/file/bot${bot.token}/${filePath}`
-      );
-      const csvContent = await response.text();
-
-      // Parse CSV
-      const lines = csvContent.trim().split("\n");
-      const headers = lines[0].split(",");
-      const sets: WorkoutSet[] = [];
-
-      for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(",");
-        if (values.length >= headers.length) {
-          sets.push({
-            date: values[0],
-            workoutName: values[1],
-            duration: values[2],
-            exerciseName: values[3],
-            setOrder: Number(values[4]),
-            weight: Number(values[5]),
-            reps: Number(values[6]),
-            distance: values[7],
-            seconds: values[8],
-            notes: values[9] ?? undefined,
-            workoutNotes: values[10],
-            rpe: values[11],
-          });
-        }
-      }
-
-      // Store in KV under user's ID
-      const userId = ctx.from.id.toString();
-      await kv.set(["workouts", userId], sets);
-
-      await ctx.reply(
-        `Processed ${sets.length} sets!\n` +
-          "Use /recent to view your recent workouts highlights"
-      );
-    } catch (error) {
-      console.error("Error processing CSV:", error);
-      await ctx.reply("Error processing the CSV file.");
+      workoutsByDate.get(set.date)?.push(set);
     }
+  });
+
+  if (workoutsByDate.size === 0) {
+    await ctx.reply(`No '${workoutType}' workouts found`);
+    return;
+  }
+
+  const lastDate = Array.from(workoutsByDate.keys()).sort().reverse()[0];
+  const lastWorkout = workoutsByDate.get(lastDate)!;
+
+  // Group exercises and find top sets
+  const exerciseMap = new Map<string, WorkoutSet[]>();
+  lastWorkout.forEach((set) => {
+    if (!exerciseMap.has(set.exerciseName)) {
+      exerciseMap.set(set.exerciseName, []);
+    }
+    exerciseMap.get(set.exerciseName)?.push(set);
+  });
+
+  let message = `💪 *Last ${workoutType} Workout Highlights*\n\n`;
+  message += `📅 *${lastDate}*\n`;
+  message += `Workout: ${workoutType}\n\n`;
+
+  // Format exercise summaries
+  for (const [exercise, sets] of exerciseMap) {
+    const topSet = sets.reduce((heaviest, current) =>
+      current.weight > heaviest.weight ? current : heaviest
+    );
+    message += formatWorkoutSummary(exercise, topSet);
+  }
+
+  // Add workout metadata
+  if (lastWorkout[0]?.duration) {
+    message += `\n⏱ Duration: ${lastWorkout[0].duration}\n`;
+  }
+  if (lastWorkout[0]?.workoutNotes) {
+    message += `📝 Notes: ${lastWorkout[0].workoutNotes}\n`;
+  }
+
+  try {
+    await ctx.reply(message, { parse_mode: "Markdown" });
+  } catch (error) {
+    console.error("Error sending message:", error);
+    await ctx.reply("Error displaying workout. Try again later.");
   }
 });
 
-// View history command
 bot.command("recent", async (ctx) => {
   const userId = ctx?.from?.id.toString();
   if (!userId) {
@@ -85,16 +118,14 @@ bot.command("recent", async (ctx) => {
 
   const result = await kv.get(["workouts", userId]);
   if (!result.value) {
-    await ctx.reply("No recent work outs found. Upload a CSV file first!");
+    await ctx.reply("No workouts found. Upload a CSV file first!");
     return;
   }
 
   const workouts = result.value as WorkoutSet[];
-  let message = "💪 *Last 3 Workouts - Top Sets*\n\n";
-
-  // Group by date and workout name
   const workoutsByDate = new Map<string, Map<string, WorkoutSet[]>>();
 
+  // Group workouts by date and exercise
   workouts.forEach((set) => {
     if (!workoutsByDate.has(set.date)) {
       workoutsByDate.set(set.date, new Map());
@@ -107,37 +138,30 @@ bot.command("recent", async (ctx) => {
     workoutMap.get(set.exerciseName)?.push(set);
   });
 
-  // Sort dates in reverse chronological order
   const sortedDates = Array.from(workoutsByDate.keys())
     .sort()
     .reverse()
-    .slice(0, 3); // Get last 3 workout dates
+    .slice(0, 3);
 
+  let message = "💪 *Last 3 Workouts - Top Sets*\n\n";
+
+  // Format workout summaries
   for (const date of sortedDates) {
     const workoutMap = workoutsByDate.get(date)!;
     message += `\n📅 *${date}*\n`;
 
-    // Process each exercise
     for (const [exercise, sets] of workoutMap) {
-      // Find the heaviest set
-      const topSet = sets.reduce((heaviest, current) => {
-        return current.weight > heaviest.weight ? current : heaviest;
-      });
-
-      message += `\n🏋️ ${exercise}\n`;
-      message += `   Best Set: ${topSet.weight}kg × ${topSet.reps} reps`;
-      if (topSet.rpe) {
-        message += ` (RPE: ${topSet.rpe})`;
-      }
-      message += "\n";
+      const topSet = sets.reduce((heaviest, current) =>
+        current.weight > heaviest.weight ? current : heaviest
+      );
+      message += formatWorkoutSummary(exercise, topSet);
     }
-
-    message += "\n"; // Add spacing between dates
+    message += "\n";
   }
 
   // Add summary
-  message += "\n📊 *Total Summary*\n";
-  message += `Total workouts: ${Array.from(workoutsByDate.keys()).length}\n`;
+  message += `📊 *Total Summary*\n`;
+  message += `Total workouts: ${workoutsByDate.size}\n`;
   message += `Showing latest ${sortedDates.length} workouts`;
 
   try {
@@ -148,12 +172,42 @@ bot.command("recent", async (ctx) => {
   }
 });
 
-// Error handler
+// File upload handler
+bot.on("message:document", async (ctx) => {
+  if (!ctx.message.document.file_name?.endsWith(".csv")) return;
+
+  try {
+    const file = await ctx.getFile();
+    if (!file.file_path) {
+      await ctx.reply("Couldn't get the file path.");
+      return;
+    }
+
+    const response = await fetch(
+      `https://api.telegram.org/file/bot${bot.token}/${file.file_path}`
+    );
+    const csvContent = await response.text();
+    const sets = parseCSV(csvContent);
+
+    // Store in KV under user's ID
+    const userId = ctx.from.id.toString();
+    await kv.set(["workouts", userId], sets);
+
+    await ctx.reply(
+      `Processed ${sets.length} sets!\nUse /recent to view your recent workouts highlights`
+    );
+  } catch (error) {
+    console.error("Error processing CSV:", error);
+    await ctx.reply("Error processing the CSV file.");
+  }
+});
+
+// Error handling
 bot.catch((err) => {
   console.error("Error in the bot:", err);
 });
 
-// Webhook handler
+// Webhook setup
 const handleUpdate = webhookCallback(bot, "std/http");
 
 // Server
